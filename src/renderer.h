@@ -14,6 +14,7 @@ class Engine {
 	int32_t i_width = 1024;
 	int32_t i_height = 1024;
 
+	GLuint m_texture_id;
 	GLFWwindow *p_window;
 	RTCDevice p_RTCdevice;
 	Camera S_camera;

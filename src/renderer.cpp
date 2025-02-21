@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "lighting.h"
 
+#include <immintrin.h>
 #include <iostream>
 
 static void glfw_error_callback(int32_t i_error, const char *psz_description)
@@ -151,32 +152,93 @@ void Renderer::Engine::render_loop()
 {
 	std::vector<float> v_framebuffer(i_width * i_height * 3, 0.0f);
 
-	while (!glfwWindowShouldClose(p_window)) {
-		std::fill(v_framebuffer.begin(), v_framebuffer.end(), 0.0f);
+	GLuint texture_id;
+	glGenTextures(1, &texture_id);
+	glBindTexture(GL_TEXTURE_2D, texture_id);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, i_width, i_height, 0, GL_RGB,
+		     GL_FLOAT, nullptr);
+
+	m_texture_id = texture_id;
+	while (!glfwWindowShouldClose(p_window)) {
+		glfwPollEvents();
+
+		std::fill(v_framebuffer.begin(), v_framebuffer.end(), 0.0f);
 		render_frame(v_framebuffer);
 
+		glBindTexture(GL_TEXTURE_2D, m_texture_id);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, i_width, i_height,
+				GL_RGB, GL_FLOAT, v_framebuffer.data());
+
 		glClear(GL_COLOR_BUFFER_BIT);
-		glDrawPixels(i_width, i_height, GL_RGB, GL_FLOAT,
-			     v_framebuffer.data());
+		glEnable(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, m_texture_id);
+		glBegin(GL_QUADS);
+		{
+			glTexCoord2f(0.0f, 0.0f);
+			glVertex2f(-1.0f, -1.0f);
+
+			glTexCoord2f(1.0f, 0.0f);
+			glVertex2f(1.0f, -1.0f);
+
+			glTexCoord2f(1.0f, 1.0f);
+			glVertex2f(1.0f, 1.0f);
+
+			glTexCoord2f(0.0f, 1.0f);
+			glVertex2f(-1.0f, 1.0f);
+		}
+		glEnd();
+		glDisable(GL_TEXTURE_2D);
 		glfwSwapBuffers(p_window);
-		glfwPollEvents();
 	}
 }
 
 void Renderer::Engine::render_frame(std::vector<float> &v_framebuffer)
 {
+	static double last_time = glfwGetTime();
 	for (int32_t i_pixel_y = 0; i_pixel_y < i_height; i_pixel_y++) {
-		for (int32_t i_pixel_x = 0; i_pixel_x < i_width; i_pixel_x++) {
-			const glm::vec3 vec_color{ lighting::trace_ray(
-				S_scene, S_camera, p_RTCdevice, i_pixel_x,
-				i_pixel_y, i_width, i_height) };
+		for (int32_t i_pixel_x = 0; i_pixel_x < i_width;
+		     i_pixel_x += 8) {
+			__m256 vec_color_r = _mm256_setzero_ps();
+			__m256 vec_color_g = _mm256_setzero_ps();
+			__m256 vec_color_b = _mm256_setzero_ps();
 
-			const int32_t i_index =
-				(i_pixel_y * i_width + i_pixel_x) * 3;
-			v_framebuffer[i_index + 0] = vec_color.r;
-			v_framebuffer[i_index + 1] = vec_color.g;
-			v_framebuffer[i_index + 2] = vec_color.b;
+			for (int32_t offset = 0; offset < 8; ++offset) {
+				if (i_pixel_x + offset < i_width) {
+					const glm::vec3 vec_color{
+						lighting::trace_ray(
+							S_scene, S_camera,
+							p_RTCdevice,
+							i_pixel_x + offset,
+							i_pixel_y, i_width,
+							i_height)
+					};
+
+					vec_color_r[offset] = vec_color.r;
+					vec_color_g[offset] = vec_color.g;
+					vec_color_b[offset] = vec_color.b;
+				}
+			}
+
+			for (int32_t offset = 0; offset < 8; ++offset) {
+				if (i_pixel_x + offset < i_width) {
+					const int32_t i_index =
+						(i_pixel_y * i_width +
+						 i_pixel_x + offset) *
+						3;
+					v_framebuffer[i_index + 0] =
+						vec_color_r[offset];
+					v_framebuffer[i_index + 1] =
+						vec_color_g[offset];
+					v_framebuffer[i_index + 2] =
+						vec_color_b[offset];
+				}
+			}
 		}
 	}
+	double current_time = glfwGetTime();
+	std::cout << current_time - last_time << '\n';
+	last_time = current_time;
 }

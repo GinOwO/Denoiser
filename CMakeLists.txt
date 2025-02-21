@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.13)
 project(DenoiseProject LANGUAGES CXX)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 
 if(UNIX)
 	# Direct CMake to use icpx rather than the default C++ compiler/linker
@@ -28,6 +28,7 @@ find_package(embree 3.0 REQUIRED HINTS ${ONEAPI_ROOT}/embree/latest)
 find_package(glfw3 3.3 REQUIRED)
 find_package(glm REQUIRED)
 find_package(OpenGL REQUIRED)
+find_package(OpenMP REQUIRED)
 
 find_path(TINYOBJLOADER_INCLUDE_DIR tiny_obj_loader.h)
 if(TINYOBJLOADER_INCLUDE_DIR)
@@ -45,8 +46,8 @@ SET(WARNING_FLAGS "-Wall -Wextra -Wno-unused-parameter -Wno-unused-variable \
 		 -Wno-unused-value -Wno-unused-private-field \
 		 -Wno-unused-const-variable -Wno-unused-const-variable")
 
-SET(COMPILE_FLAGS "${WARNING_FLAGS}")
-SET(LINK_FLAGS)
+SET(COMPILE_FLAGS "${WARNING_FLAGS} -mavx")
+SET(LINK_FLAGS "${OpenMP_CXX_FLAGS} ${WIN_FLAG}")
 
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMPILE_FLAGS}")
 SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${LINK_FLAGS}")
@@ -59,7 +60,14 @@ set(SOURCES
 )
 
 add_executable(${TARGET_NAME} ${SOURCES})
-target_link_libraries(${TARGET_NAME} PRIVATE embree glfw OpenGL::GL glm::glm tinyobjloader)
+target_link_libraries(${TARGET_NAME} PRIVATE 
+	embree 
+	glfw 
+	OpenGL::GL 
+	glm::glm 
+	tinyobjloader
+	OpenMP::OpenMP_CXX
+)
 
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 	set(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR})
