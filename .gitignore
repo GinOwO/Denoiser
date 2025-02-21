@@ -40,3 +40,7 @@ Makefile
 # Other
 *.log
 *.tmp
+
+# Build directories
+build
+bin
