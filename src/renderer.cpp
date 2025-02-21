@@ -1,7 +1,9 @@
 #include "renderer.h"
 #include "lighting.h"
 
-static void glfw_error_callback(int i_error, const char *psz_description)
+#include <iostream>
+
+static void glfw_error_callback(int32_t i_error, const char *psz_description)
 {
 	std::cerr << "GLFW Error (" << i_error << "): " << psz_description
 		  << "\n";
@@ -12,7 +14,7 @@ static void embree_error_func(void *, RTCError i_error, const char *psz_str)
 	std::cerr << "Embree error (" << i_error << "): " << psz_str << "\n";
 }
 
-void Renderer::Renderer::init_glfw()
+void Renderer::Engine::init_glfw()
 {
 	glfwSetErrorCallback(glfw_error_callback);
 	if (!glfwInit()) {
@@ -33,7 +35,7 @@ void Renderer::Renderer::init_glfw()
 	glfwSwapInterval(1);
 }
 
-void Renderer::Renderer::init_embree_device()
+void Renderer::Engine::init_embree_device()
 {
 	p_RTCdevice = rtcNewDevice(nullptr);
 	if (!p_RTCdevice) {
@@ -43,7 +45,7 @@ void Renderer::Renderer::init_embree_device()
 	rtcSetDeviceErrorFunction(p_RTCdevice, embree_error_func, nullptr);
 }
 
-void Renderer::Renderer::init_camera()
+void Renderer::Engine::init_camera()
 {
 	S_camera.vec_scene_center = { -278.0f, 274.4f, -279.6f };
 	S_camera.vec_camera_origin = { S_camera.vec_scene_center.x,
@@ -68,16 +70,18 @@ void Renderer::Renderer::init_camera()
 		S_camera.vec_up * (S_camera.f_viewport_height * 0.5f);
 }
 
-Renderer::Renderer::Renderer(int i_width, int i_height)
+Renderer::Engine::Engine(const int32_t i_width, const int32_t i_height,
+			 const float f_ambient_intensity)
 	: i_width(i_width)
 	, i_height(i_height)
 {
 	init_glfw();
 	init_embree_device();
 	init_camera();
+	S_scene.f_ambient_intensity = f_ambient_intensity;
 }
 
-Renderer::Renderer::~Renderer()
+Renderer::Engine::~Engine()
 {
 	rtcReleaseScene(S_scene.p_RTCscene);
 	rtcReleaseDevice(p_RTCdevice);
@@ -86,12 +90,12 @@ Renderer::Renderer::~Renderer()
 	glfwTerminate();
 }
 
-void Renderer::Renderer::load_obj_scene(const std::string &s_obj_file,
-					const std::string &s_base_dir)
+void Renderer::Engine::load_obj_scene(const std::string &s_obj_file,
+				      const std::string &s_base_dir)
 {
-	bool b_ret = tinyobj::LoadObj(&S_scene.S_attrib, &S_scene.v_shapes,
-				      &S_scene.v_materials, nullptr,
-				      s_obj_file.c_str(), s_base_dir.c_str());
+	const bool b_ret = tinyobj::LoadObj(
+		&S_scene.S_attrib, &S_scene.v_shapes, &S_scene.v_materials,
+		nullptr, s_obj_file.c_str(), s_base_dir.c_str());
 	if (!b_ret) {
 		std::cerr << "Failed to load/parse .obj file.\n";
 		exit(EXIT_FAILURE);
@@ -141,10 +145,9 @@ void Renderer::Renderer::load_obj_scene(const std::string &s_obj_file,
 	}
 
 	rtcCommitScene(S_scene.p_RTCscene);
-	std::cout << "Scene loaded\n";
 }
 
-void Renderer::Renderer::render_loop()
+void Renderer::Engine::render_loop()
 {
 	std::vector<float> v_framebuffer(i_width * i_height * 3, 0.0f);
 
@@ -161,21 +164,16 @@ void Renderer::Renderer::render_loop()
 	}
 }
 
-void Renderer::Renderer::render_frame(std::vector<float> &v_framebuffer)
+void Renderer::Engine::render_frame(std::vector<float> &v_framebuffer)
 {
-	for (int i_pixel_y = 0; i_pixel_y < i_height; i_pixel_y++) {
-		for (int i_pixel_x = 0; i_pixel_x < i_width; i_pixel_x++) {
-			glm::vec3 vec_color = lighting::trace_ray(
-				S_scene.p_RTCscene, p_RTCdevice, i_pixel_x,
-				i_pixel_y, i_width, i_height,
-				S_camera.vec_camera_origin,
-				S_camera.vec_lower_left_corner,
-				S_camera.vec_right, S_camera.vec_up,
-				S_camera.f_viewport_width,
-				S_camera.f_viewport_height,
-				S_scene.v_materials);
+	for (int32_t i_pixel_y = 0; i_pixel_y < i_height; i_pixel_y++) {
+		for (int32_t i_pixel_x = 0; i_pixel_x < i_width; i_pixel_x++) {
+			const glm::vec3 vec_color{ lighting::trace_ray(
+				S_scene, S_camera, p_RTCdevice, i_pixel_x,
+				i_pixel_y, i_width, i_height) };
 
-			int i_index = (i_pixel_y * i_width + i_pixel_x) * 3;
+			const int32_t i_index =
+				(i_pixel_y * i_width + i_pixel_x) * 3;
 			v_framebuffer[i_index + 0] = vec_color.r;
 			v_framebuffer[i_index + 1] = vec_color.g;
 			v_framebuffer[i_index + 2] = vec_color.b;

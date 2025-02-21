@@ -16,13 +16,9 @@ bool is_in_shadow(RTCScene p_scene, const glm::vec3 &vec_point,
 glm::vec3 compute_lambert_color(const glm::vec3 &vec_normal,
 				const glm::vec3 &vec_point,
 				const glm::vec3 &vec_material_color,
-				RTCScene p_scene);
+				RTCScene p_scene, float f_ambient_strength);
 
-glm::vec3 trace_ray(RTCScene p_scene, RTCDevice p_device, int i_pixel_x,
-		    int i_pixel_y, int i_width, int i_height,
-		    const glm::vec3 &vec_camera_origin,
-		    const glm::vec3 &vec_lower_left_corner,
-		    const glm::vec3 &vec_right, const glm::vec3 &vec_up,
-		    float f_viewport_width, float f_viewport_height,
-		    const std::vector<tinyobj::material_t> &v_materials);
+glm::vec3 trace_ray(Scene &S_scene, Camera &S_camera, RTCDevice p_device,
+		    int32_t i_pixel_x, int32_t i_pixel_y, int32_t i_width,
+		    int32_t i_height);
 } // namespace lighting

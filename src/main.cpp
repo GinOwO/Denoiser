@@ -1,16 +1,8 @@
 #include "common.h"
 #include "renderer.h"
 
-#include <embree3/rtcore.h>
-#include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
-#include <tiny_obj_loader.h>
-
-#include <iostream>
 #include <vector>
-#include <cstring>
-#include <cstdlib>
-#include <cfloat>
+#include <string>
 
 /*
 Notation:
@@ -23,7 +15,7 @@ Notation:
 - b_: bool
 - s_: string
 - p_: pointer
-- pT_: pointer to type T
+- uX_: unsigned X int
 - v_: std::vector
 - vec_: glm::vec3
 
@@ -31,7 +23,7 @@ Notation:
 
 int main()
 {
-	Renderer::Renderer C_renderer{ 1024, 1024 };
+	Renderer::Engine C_renderer{ 1024, 1024, 0.075f };
 
 	std::string s_input_file =
 		"/home/gin/Desktop/denoise/src/CornellBox.obj";
