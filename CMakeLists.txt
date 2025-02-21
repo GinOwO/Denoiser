@@ -52,7 +52,11 @@ SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMPILE_FLAGS}")
 SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${LINK_FLAGS}")
 
 set(TARGET_NAME denoise)
-set(SOURCES src/main.cpp)
+set(SOURCES 
+	${PROJECT_SOURCE_DIR}/src/lighting.cpp
+	${PROJECT_SOURCE_DIR}/src/renderer.cpp
+	${PROJECT_SOURCE_DIR}/src/main.cpp
+)
 
 add_executable(${TARGET_NAME} ${SOURCES})
 target_link_libraries(${TARGET_NAME} PRIVATE embree glfw OpenGL::GL glm::glm tinyobjloader)
