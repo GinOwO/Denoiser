@@ -6,8 +6,7 @@ if(UNIX)
 	# Direct CMake to use icpx rather than the default C++ compiler/linker
 	set(CMAKE_CXX_COMPILER icpx)
 else()
-	# Force CMake to use icx-cl rather than the default C++ compiler/linker 
-	# (needed on Windows only)
+	# Force CMake to use icx-cl rather than the default C++ compiler/linker (needed on Windows only)
 	include (CMakeForceCompiler)
 	CMAKE_FORCE_CXX_COMPILER (icx-cl IntelDPCPP)
 	include (Platform/Windows-Clang)
@@ -24,32 +23,43 @@ else()
 	set(ONEAPI_ROOT $ENV{ONEAPI_ROOT})
 endif()
 
+# Find required packages
 find_package(embree 3.0 REQUIRED HINTS ${ONEAPI_ROOT}/embree/latest)
-# find_package(IntelSYCL REQUIRED)
+find_package(glfw3 3.3 REQUIRED)
+find_package(glm REQUIRED)
+find_package(OpenGL REQUIRED)
 
-# set(SYCL_COMPILE_FLAGS "-fsycl -Xclang -fsycl-allow-func-ptr -fsycl-targets=spir64 ${WIN_FLAG}")
-# set(SYCL_LINK_FLAGS "")
-# if(NOT MSVC)
-# 	set(SYCL_LINK_FLAGS "-fsycl -fsycl-targets=spir64")
-# endif(NOT MSVC)
+find_path(TINYOBJLOADER_INCLUDE_DIR tiny_obj_loader.h)
+if(TINYOBJLOADER_INCLUDE_DIR)
+	include_directories(${TINYOBJLOADER_INCLUDE_DIR})
+else()
+	message(FATAL_ERROR "tiny_obj_loader.h not found!")
+endif()
 
 
-GET_FILENAME_COMPONENT(SYCL_COMPILER_DIR ${CMAKE_CXX_COMPILER} PATH)
-include_directories(SYSTEM "${SYCL_COMPILER_DIR}/../include/sycl" "${SYCL_COMPILER_DIR}/../include")
-
+# Set the executable output directory
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_SOURCE_DIR}/bin)
+
+SET(WARNING_FLAGS "-Wall -Wextra -Wno-unused-parameter -Wno-unused-variable \
+		 -Wno-unused-function -Wno-unused-but-set-variable \
+		 -Wno-unused-value -Wno-unused-private-field \
+		 -Wno-unused-const-variable -Wno-unused-const-variable")
+
+SET(COMPILE_FLAGS "${WARNING_FLAGS}")
+SET(LINK_FLAGS)
+
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMPILE_FLAGS}")
+SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${LINK_FLAGS}")
 
 set(TARGET_NAME denoise)
 set(SOURCES src/main.cpp)
 
-ADD_EXECUTABLE(${TARGET_NAME} ${SOURCES})
-TARGET_LINK_LIBRARIES(${TARGET_NAME} embree)
-# set_property(TARGET ${TARGET_NAME} APPEND PROPERTY COMPILE_FLAGS ${SYCL_COMPILE_FLAGS})
-# set_property(TARGET ${TARGET_NAME} APPEND PROPERTY LINK_FLAGS	${SYCL_LINK_FLAGS})
+add_executable(${TARGET_NAME} ${SOURCES})
+target_link_libraries(${TARGET_NAME} PRIVATE embree glfw OpenGL::GL glm::glm tinyobjloader)
 
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 	set(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR})
 endif()
 
 install(TARGETS ${TARGET_NAME}
-		RUNTIME DESTINATION bin/)
+	RUNTIME DESTINATION bin/)
