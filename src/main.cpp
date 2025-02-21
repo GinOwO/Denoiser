@@ -49,6 +49,7 @@ int main()
 		return EXIT_FAILURE;
 	}
 	glfwMakeContextCurrent(window);
+	glfwSwapInterval(1); // vsync
 
 	// ------------------- Embree Setup -------------------
 	RTCDevice rtcDevice = rtcNewDevice(nullptr);
@@ -60,7 +61,13 @@ int main()
 
 	RTCScene scene = rtcNewScene(rtcDevice);
 
-	// ------------------- Load Cornell Box OBJ -------------------
+	// ------------------- Load Scene -------------------
+	// Light source
+	glm::vec3 lightPos(-278.0f, 500.0f, -279.6f);
+	glm::vec3 lightColor(1.0f, 1.0f, 1.0f);
+	glm::vec3 lightIntensity(15.0f, 15.0f, 15.0f);
+
+	// Load Cornell Box OBJ
 	std::string inputfile = "/home/gin/Desktop/denoise/src/CornellBox.obj";
 	std::string base_dir = "/home/gin/Desktop/denoise/src/";
 	tinyobj::attrib_t attrib;
@@ -207,12 +214,12 @@ int main()
 						float r = mat.diffuse[0];
 						float g = mat.diffuse[1];
 						float b = mat.diffuse[2];
+
 						framebuffer[idx + 0] = r;
 						framebuffer[idx + 1] = g;
 						framebuffer[idx + 2] = b;
 					}
 				} else {
-					// Background color
 					framebuffer[idx + 0] = 0.0f;
 					framebuffer[idx + 1] = 0.0f;
 					framebuffer[idx + 2] = 0.0f;
