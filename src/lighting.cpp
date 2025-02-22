@@ -3,24 +3,42 @@
 #include <cstdint>
 #include <cstring>
 #include <cfloat>
+#include <random>
 
-static float compute_shadow_factor(RTCScene p_scene, const glm::vec3 &vec_point,
+static std::vector<glm::vec2> generate_stratified_offsets(int32_t i_num_samples,
+							  float f_light_width,
+							  float f_light_height)
+{
+	static thread_local std::mt19937 rng{ std::random_device{}() };
+	std::vector<glm::vec2> offsets(i_num_samples);
+	for (int32_t i = 0; i < i_num_samples; i++) {
+		std::uniform_real_distribution<float> dist_x(
+			-f_light_width * 0.5f, f_light_width * 0.5f);
+		std::uniform_real_distribution<float> dist_z(
+			-f_light_height * 0.5f, f_light_height * 0.5f);
+		offsets[i] = glm::vec2(dist_x(rng), dist_z(rng));
+	}
+	return offsets;
+}
+
+static float compute_shadow_factor(const RTCScene &p_scene,
+				   const glm::vec3 &vec_point,
 				   const glm::vec3 &vec_light_pos,
 				   float f_light_width, float f_light_height,
 				   int32_t i_num_samples = 16)
 {
+	// Precompute offsets once per thread for constant light dimensions.
+	static thread_local std::vector<glm::vec2> precomputed_offsets;
+	if (precomputed_offsets.size() != static_cast<size_t>(i_num_samples)) {
+		precomputed_offsets = generate_stratified_offsets(
+			i_num_samples, f_light_width, f_light_height);
+	}
+
 	float f_shadow_sum = 0.0f;
 	for (int32_t i = 0; i < i_num_samples; i++) {
-		float f_rand_x = (static_cast<float>(std::rand()) /
-					  static_cast<float>(RAND_MAX) -
-				  0.5f) *
-				 f_light_width;
-		float f_rand_z = (static_cast<float>(std::rand()) /
-					  static_cast<float>(RAND_MAX) -
-				  0.5f) *
-				 f_light_height;
+		const glm::vec2 &offset = precomputed_offsets[i];
 		glm::vec3 sample_light_pos =
-			vec_light_pos + glm::vec3(f_rand_x, 0.0f, f_rand_z);
+			vec_light_pos + glm::vec3(offset.x, 0.0f, offset.y);
 		glm::vec3 sample_dir = sample_light_pos - vec_point;
 		float f_sample_dist = glm::length(sample_dir);
 		sample_dir = glm::normalize(sample_dir);
@@ -46,7 +64,7 @@ static float compute_shadow_factor(RTCScene p_scene, const glm::vec3 &vec_point,
 	return f_shadow_sum / static_cast<float>(i_num_samples);
 }
 
-bool lighting::is_in_shadow(RTCScene p_scene, const glm::vec3 &vec_point,
+bool lighting::is_in_shadow(const RTCScene &p_scene, const glm::vec3 &vec_point,
 			    const glm::vec3 &vec_light_dir,
 			    float f_dist_to_light)
 {
@@ -113,10 +131,10 @@ glm::vec3 lighting::compute_lambert_color(const glm::vec3 &vec_normal,
 	glm::vec3 vec_lit_color =
 		vec_material_color * vec_light_color * f_lambert_term;
 
-	return vec_ambient + (f_shadow_factor * vec_lit_color);
+	return vec_ambient + (vec_lit_color);
 }
 
-glm::vec3 lighting::trace_ray(Scene &S_scene, Camera &S_camera,
+glm::vec3 lighting::trace_ray(const Scene &S_scene, const Camera &S_camera,
 			      RTCDevice p_device, int32_t i_pixel_x,
 			      int32_t i_pixel_y, int32_t i_width,
 			      int32_t i_height)
@@ -132,8 +150,9 @@ glm::vec3 lighting::trace_ray(Scene &S_scene, Camera &S_camera,
 	const float f_v = static_cast<float>(i_pixel_y) /
 			  static_cast<float>(i_height - 1);
 
-	RTCScene p_scene = S_scene.p_RTCscene;
-	std::vector<tinyobj::material_t> &vec_materials = S_scene.v_materials;
+	const RTCScene &p_scene = S_scene.p_RTCscene;
+	const std::vector<tinyobj::material_t> &vec_materials =
+		S_scene.v_materials;
 
 	const glm::vec3 vec_pixel_position =
 		vec_lower_left_corner + vec_right * (f_u * f_viewport_width) +

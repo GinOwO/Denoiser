@@ -3,6 +3,7 @@
 
 #include <immintrin.h>
 #include <iostream>
+#include <execution>
 
 static void glfw_error_callback(int32_t i_error, const char *psz_description)
 {
@@ -150,9 +151,12 @@ void Renderer::Engine::load_obj_scene(const std::string &s_obj_file,
 
 void Renderer::Engine::render_loop()
 {
-	std::vector<float> v_framebuffer(i_width * i_height * 3, 0.0f);
+	static int frame_count = 0;
+	static std::vector<float> acc_buffer(i_width * i_height * 3, 0.0f);
 
 	GLuint texture_id;
+	std::vector<float> v_framebuffer(i_width * i_height * 3, 0.0f);
+
 	glGenTextures(1, &texture_id);
 	glBindTexture(GL_TEXTURE_2D, texture_id);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -162,11 +166,22 @@ void Renderer::Engine::render_loop()
 		     GL_FLOAT, nullptr);
 
 	m_texture_id = texture_id;
+
+	static double last_time = glfwGetTime();
 	while (!glfwWindowShouldClose(p_window)) {
 		glfwPollEvents();
 
-		std::fill(v_framebuffer.begin(), v_framebuffer.end(), 0.0f);
+		std::fill(std::execution::par_unseq, v_framebuffer.begin(),
+			  v_framebuffer.end(), 0.0f);
+
 		render_frame(v_framebuffer);
+
+		// frame_count++;
+		// for (int i = 0; i < i_width * i_height * 3; i++) {
+		// 	acc_buffer[i] = (acc_buffer[i] * (frame_count - 1) +
+		// 			 v_framebuffer[i]) /
+		// 			frame_count;
+		// }
 
 		glBindTexture(GL_TEXTURE_2D, m_texture_id);
 		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, i_width, i_height,
@@ -192,53 +207,51 @@ void Renderer::Engine::render_loop()
 		glEnd();
 		glDisable(GL_TEXTURE_2D);
 		glfwSwapBuffers(p_window);
+
+		double current_time = glfwGetTime();
+		std::cout << "Frame time: " << current_time - last_time
+			  << "s\n";
+		last_time = current_time;
 	}
 }
 
 void Renderer::Engine::render_frame(std::vector<float> &v_framebuffer)
 {
-	static double last_time = glfwGetTime();
+	// static std::vector<int32_t> v_pixel_y;
+	// if (v_pixel_y.empty()) {
+	// 	v_pixel_y.resize(i_height);
+	// 	std::iota(v_pixel_y.begin(), v_pixel_y.end(), 0);
+	// }
+
+	// std::for_each(
+	// 	std::execution::par, v_pixel_y.begin(), v_pixel_y.end(),
+	// 	[&](int32_t i_pixel_y) {
+	// 		for (int i_pixel_x = 0; i_pixel_x < i_width;
+	// 		     i_pixel_x++) {
+	// 			const glm::vec3 vec_color{ lighting::trace_ray(
+	// 				S_scene, S_camera, p_RTCdevice,
+	// 				i_pixel_x, i_pixel_y, i_width,
+	// 				i_height) };
+
+	// 			int i_index =
+	// 				(i_pixel_y * i_width + i_pixel_x) * 3;
+	// 			v_framebuffer[i_index + 0] = vec_color.r;
+	// 			v_framebuffer[i_index + 1] = vec_color.g;
+	// 			v_framebuffer[i_index + 2] = vec_color.b;
+	// 		}
+	// 	});
+
+#pragma omp parallel for schedule(dynamic)
 	for (int32_t i_pixel_y = 0; i_pixel_y < i_height; i_pixel_y++) {
-		for (int32_t i_pixel_x = 0; i_pixel_x < i_width;
-		     i_pixel_x += 8) {
-			__m256 vec_color_r = _mm256_setzero_ps();
-			__m256 vec_color_g = _mm256_setzero_ps();
-			__m256 vec_color_b = _mm256_setzero_ps();
+		for (int32_t i_pixel_x = 0; i_pixel_x < i_width; i_pixel_x++) {
+			const glm::vec3 vec_color{ lighting::trace_ray(
+				S_scene, S_camera, p_RTCdevice, i_pixel_x,
+				i_pixel_y, i_width, i_height) };
 
-			for (int32_t offset = 0; offset < 8; ++offset) {
-				if (i_pixel_x + offset < i_width) {
-					const glm::vec3 vec_color{
-						lighting::trace_ray(
-							S_scene, S_camera,
-							p_RTCdevice,
-							i_pixel_x + offset,
-							i_pixel_y, i_width,
-							i_height)
-					};
-
-					vec_color_r[offset] = vec_color.r;
-					vec_color_g[offset] = vec_color.g;
-					vec_color_b[offset] = vec_color.b;
-				}
-			}
-
-			for (int32_t offset = 0; offset < 8; ++offset) {
-				if (i_pixel_x + offset < i_width) {
-					const int32_t i_index =
-						(i_pixel_y * i_width +
-						 i_pixel_x + offset) *
-						3;
-					v_framebuffer[i_index + 0] =
-						vec_color_r[offset];
-					v_framebuffer[i_index + 1] =
-						vec_color_g[offset];
-					v_framebuffer[i_index + 2] =
-						vec_color_b[offset];
-				}
-			}
+			int i_index = (i_pixel_y * i_width + i_pixel_x) * 3;
+			v_framebuffer[i_index + 0] = vec_color.r;
+			v_framebuffer[i_index + 1] = vec_color.g;
+			v_framebuffer[i_index + 2] = vec_color.b;
 		}
 	}
-	double current_time = glfwGetTime();
-	std::cout << current_time - last_time << '\n';
-	last_time = current_time;
 }

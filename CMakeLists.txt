@@ -46,8 +46,8 @@ SET(WARNING_FLAGS "-Wall -Wextra -Wno-unused-parameter -Wno-unused-variable \
 		 -Wno-unused-value -Wno-unused-private-field \
 		 -Wno-unused-const-variable -Wno-unused-const-variable")
 
-SET(COMPILE_FLAGS "${WARNING_FLAGS} -mavx")
-SET(LINK_FLAGS "${OpenMP_CXX_FLAGS} ${WIN_FLAG}")
+SET(COMPILE_FLAGS "${WARNING_FLAGS} -mavx -DPARALLEL -O3 -pg")
+SET(LINK_FLAGS "${OpenMP_CXX_FLAGS} ${WIN_FLAG} -ltbb -pg")
 
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMPILE_FLAGS}")
 SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${LINK_FLAGS}")
