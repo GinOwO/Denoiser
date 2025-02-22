@@ -6,7 +6,7 @@
 #include <random>
 
 static constexpr int32_t LIGHT_BOUNCE_DEPTH = 3;
-static constexpr int32_t SHADOW_SAMPLES = 32;
+static constexpr int32_t SHADOW_SAMPLES = 64;
 static constexpr glm::vec3 LIGHT_POS(-278.0f, 548.0f, -279.6f);
 static constexpr glm::vec3 LIGHT_COLOR(0xff / 255.0f, 0xbb / 255.0f,
 				       0x73 / 255.0f);
@@ -276,13 +276,12 @@ glm::vec3 lighting::compute_lambert_color(const glm::vec3 &vec_normal,
 	glm::vec3 vec_lit_color = vec_material_color * LIGHT_COLOR *
 				  f_lambert_term * f_shadow_factor;
 
-	return vec_ambient + vec_lit_color;
+	return glm::clamp(vec_ambient + vec_lit_color, 0.0f, 1.0f);
 }
 
-glm::vec3 lighting::trace_ray(const Scene &S_scene, const Camera &S_camera,
-			      RTCDevice p_device, int32_t i_pixel_x,
-			      int32_t i_pixel_y, int32_t i_width,
-			      int32_t i_height)
+SurfaceInfo lighting::trace_ray_with_buffers(
+	const Scene &S_scene, const Camera &S_camera, RTCDevice p_device,
+	int32_t i_pixel_x, int32_t i_pixel_y, int32_t i_width, int32_t i_height)
 {
 	const float f_u =
 		static_cast<float>(i_pixel_x) / static_cast<float>(i_width - 1);
@@ -294,9 +293,74 @@ glm::vec3 lighting::trace_ray(const Scene &S_scene, const Camera &S_camera,
 		S_camera.vec_up * (f_v * S_camera.f_viewport_height);
 	const glm::vec3 vec_ray_direction =
 		glm::normalize(vec_pixel_position - S_camera.vec_camera_origin);
-	return trace_ray_recursive(S_scene.p_RTCscene, p_device,
-				   S_camera.vec_camera_origin,
-				   vec_ray_direction, LIGHT_BOUNCE_DEPTH,
-				   S_scene.v_materials,
-				   S_scene.f_ambient_intensity);
+
+	RTCRayHit t_ray_hit;
+	std::memset(&t_ray_hit, 0, sizeof(t_ray_hit));
+
+	t_ray_hit.ray.org_x = S_camera.vec_camera_origin.x;
+	t_ray_hit.ray.org_y = S_camera.vec_camera_origin.y;
+	t_ray_hit.ray.org_z = S_camera.vec_camera_origin.z;
+	t_ray_hit.ray.dir_x = vec_ray_direction.x;
+	t_ray_hit.ray.dir_y = vec_ray_direction.y;
+	t_ray_hit.ray.dir_z = vec_ray_direction.z;
+	t_ray_hit.ray.tnear = 0.001f;
+	t_ray_hit.ray.tfar = FLT_MAX;
+	t_ray_hit.ray.mask = -1;
+	t_ray_hit.ray.flags = 0;
+	t_ray_hit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+	t_ray_hit.hit.primID = RTC_INVALID_GEOMETRY_ID;
+
+	RTCIntersectContext t_context;
+	rtcInitIntersectContext(&t_context);
+	rtcIntersect1(S_scene.p_RTCscene, &t_context, &t_ray_hit);
+
+	SurfaceInfo result;
+	if (t_ray_hit.hit.geomID == RTC_INVALID_GEOMETRY_ID) {
+		result.color = glm::vec3(0.0f);
+		result.albedo = glm::vec3(0.0f);
+		result.normal = glm::vec3(0.0f);
+		return result;
+	}
+
+	RTCGeometry p_geom =
+		rtcGetGeometry(S_scene.p_RTCscene, t_ray_hit.hit.geomID);
+	GeometryUserData *p_user_data =
+		(GeometryUserData *)rtcGetGeometryUserData(p_geom);
+	const tinyobj::mesh_t *p_mesh = p_user_data->mesh_ptr;
+
+	int i_mat_id = 0;
+	if (t_ray_hit.hit.primID < p_mesh->material_ids.size()) {
+		i_mat_id = p_mesh->material_ids[t_ray_hit.hit.primID];
+	}
+
+	result.normal = glm::normalize(glm::vec3(
+		t_ray_hit.hit.Ng_x, t_ray_hit.hit.Ng_y, t_ray_hit.hit.Ng_z));
+
+	if (i_mat_id >= 0 &&
+	    i_mat_id < static_cast<int>(S_scene.v_materials.size())) {
+		const tinyobj::material_t &mat = S_scene.v_materials[i_mat_id];
+		result.albedo = glm::vec3(mat.diffuse[0], mat.diffuse[1],
+					  mat.diffuse[2]);
+	} else {
+		result.albedo = glm::vec3(1.0f, 0.0f, 1.0f);
+	}
+
+	int max_depth = 3;
+	result.color = trace_ray_recursive(S_scene.p_RTCscene, p_device,
+					   S_camera.vec_camera_origin,
+					   vec_ray_direction, max_depth,
+					   S_scene.v_materials,
+					   S_scene.f_ambient_intensity);
+
+	return result;
+}
+
+glm::vec3 lighting::trace_ray(const Scene &S_scene, const Camera &S_camera,
+			      RTCDevice p_device, int32_t i_pixel_x,
+			      int32_t i_pixel_y, int32_t i_width,
+			      int32_t i_height)
+{
+	return trace_ray_with_buffers(S_scene, S_camera, p_device, i_pixel_x,
+				      i_pixel_y, i_width, i_height)
+		.color;
 }

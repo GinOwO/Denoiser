@@ -85,7 +85,6 @@ Renderer::Engine::Engine(const int32_t i_width, const int32_t i_height,
 	, v_color_buffer(i_width * i_height * 3, 0.0f)
 	, v_albedo_buffer(i_width * i_height * 3, 0.0f)
 	, v_normal_buffer(i_width * i_height * 3, 0.0f)
-	, acc_buffer(i_width * i_height * 3, 0.0f)
 	, m_denoised_frame(i_width * i_height * 3, 0.0f)
 {
 	init_glfw();
@@ -190,7 +189,7 @@ void Renderer::Engine::render_loop(const int sample_limit)
 	while (true) {
 		glfwPollEvents();
 		if (glfwWindowShouldClose(p_window)) {
-			return;
+			exit(EXIT_FAILURE);
 		}
 
 		if (sample_count >= sample_limit)
@@ -199,14 +198,15 @@ void Renderer::Engine::render_loop(const int sample_limit)
 
 		sample_count++;
 		for (int i = 0; i < i_width * i_height * 3; i++) {
-			acc_buffer[i] = (acc_buffer[i] * (sample_count - 1) +
-					 v_framebuffer[i]) /
-					sample_count;
+			v_color_buffer[i] =
+				(v_color_buffer[i] * (sample_count - 1) +
+				 v_framebuffer[i]) /
+				sample_count;
 		}
 
 		glBindTexture(GL_TEXTURE_2D, m_texture_id);
 		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, i_width, i_height,
-				GL_RGB, GL_FLOAT, acc_buffer.data());
+				GL_RGB, GL_FLOAT, v_color_buffer.data());
 
 		glClear(GL_COLOR_BUFFER_BIT);
 		glEnable(GL_TEXTURE_2D);
@@ -235,14 +235,18 @@ void Renderer::Engine::render_loop(const int sample_limit)
 		  << "s\nSample count: " << sample_count << "\nSample Time: "
 		  << (current_time - last_time) / sample_count << "s\n";
 
-	Renderer::Engine::write_buffer_to_image(acc_buffer, i_width, i_height,
-						"./acc_buffer.png");
+	Renderer::Engine::write_buffer_to_image(v_color_buffer, i_width,
+						i_height, "color_buffer.png");
+	Renderer::Engine::write_buffer_to_image(v_albedo_buffer, i_width,
+						i_height, "albedo_buffer.png");
+	Renderer::Engine::write_buffer_to_image(v_normal_buffer, i_width,
+						i_height, "normal_buffer.png");
 	oidn_denoise();
 
 	while (true) {
 		glfwPollEvents();
 		if (glfwWindowShouldClose(p_window)) {
-			return;
+			exit(EXIT_FAILURE);
 		}
 
 		glBindTexture(GL_TEXTURE_2D, m_texture_id);
@@ -289,15 +293,20 @@ void Renderer::Engine::oidn_denoise()
 		  m_denoised_frame.end(), 0.0f);
 
 	double last_time = glfwGetTime();
-	m_denoiser_filter.setImage("color", acc_buffer.data(),
+
+	m_denoiser_filter.setImage("color", v_color_buffer.data(),
+				   oidn::Format::Float3, i_width, i_height);
+	m_denoiser_filter.setImage("albedo", v_albedo_buffer.data(),
+				   oidn::Format::Float3, i_width, i_height);
+	m_denoiser_filter.setImage("normal", v_normal_buffer.data(),
 				   oidn::Format::Float3, i_width, i_height);
 	m_denoiser_filter.setImage("output", m_denoised_frame.data(),
 				   oidn::Format::Float3, i_width, i_height);
 	m_denoiser_filter.commit();
 	m_denoiser_filter.execute();
+
 	double current_time = glfwGetTime();
 	std::cout << "Denoising time: " << current_time - last_time << "s\n";
-
 	Renderer::Engine::write_buffer_to_image(m_denoised_frame, i_width,
 						i_height,
 						"./oidn_denoised_frame.png");
@@ -307,6 +316,13 @@ void Renderer::Engine::custom_denoise()
 {
 	std::fill(std::execution::par_unseq, m_denoised_frame.begin(),
 		  m_denoised_frame.end(), 0.0f);
+	double last_time = glfwGetTime();
+
+	double current_time = glfwGetTime();
+	std::cout << "Denoising time: " << current_time - last_time << "s\n";
+	Renderer::Engine::write_buffer_to_image(m_denoised_frame, i_width,
+						i_height,
+						"./custom_denoised_frame.png");
 }
 
 void Renderer::Engine::render_frame(std::vector<float> &v_framebuffer)
@@ -338,9 +354,11 @@ void Renderer::Engine::render_frame(std::vector<float> &v_framebuffer)
 #pragma omp parallel for schedule(dynamic)
 	for (int32_t i_pixel_y = 0; i_pixel_y < i_height; i_pixel_y++) {
 		for (int32_t i_pixel_x = 0; i_pixel_x < i_width; i_pixel_x++) {
-			const glm::vec3 vec_color{ lighting::trace_ray(
-				S_scene, S_camera, p_RTCdevice, i_pixel_x,
-				i_pixel_y, i_width, i_height) };
+			const SurfaceInfo surface_info{
+				lighting::trace_ray_with_buffers(
+					S_scene, S_camera, p_RTCdevice,
+					i_pixel_x, i_pixel_y, i_width, i_height)
+			};
 
 			int i_index = (i_pixel_y * i_width + i_pixel_x) * 3;
 			// v_framebuffer[i_index + 0] =
@@ -350,11 +368,22 @@ void Renderer::Engine::render_frame(std::vector<float> &v_framebuffer)
 			// v_framebuffer[i_index + 2] =
 			// 	glm::clamp(vec_color.b, 0.0f, 1.0f);
 			v_framebuffer[i_index + 0] =
-				ACES_tonemapper(vec_color.r);
+				ACES_tonemapper(surface_info.color.r);
 			v_framebuffer[i_index + 1] =
-				ACES_tonemapper(vec_color.g);
+				ACES_tonemapper(surface_info.color.g);
 			v_framebuffer[i_index + 2] =
-				ACES_tonemapper(vec_color.b);
+				ACES_tonemapper(surface_info.color.b);
+
+			v_albedo_buffer[i_index + 0] = surface_info.albedo.r;
+			v_albedo_buffer[i_index + 1] = surface_info.albedo.g;
+			v_albedo_buffer[i_index + 2] = surface_info.albedo.b;
+
+			v_normal_buffer[i_index + 0] =
+				surface_info.normal.x * 0.5f + 0.5f;
+			v_normal_buffer[i_index + 1] =
+				surface_info.normal.y * 0.5f + 0.5f;
+			v_normal_buffer[i_index + 2] =
+				surface_info.normal.z * 0.5f + 0.5f;
 		}
 	}
 }

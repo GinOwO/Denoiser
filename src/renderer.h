@@ -26,7 +26,6 @@ class Engine {
 	std::vector<float> v_color_buffer;
 	std::vector<float> v_albedo_buffer;
 	std::vector<float> v_normal_buffer;
-	std::vector<float> acc_buffer;
 	std::vector<float> m_denoised_frame;
 
     private:

@@ -18,6 +18,11 @@ glm::vec3 compute_lambert_color(const glm::vec3 &vec_normal,
 				const glm::vec3 &vec_material_color,
 				RTCScene p_scene, float f_ambient_strength);
 
+SurfaceInfo trace_ray_with_buffers(const Scene &S_scene, const Camera &S_camera,
+				   RTCDevice p_device, int32_t i_pixel_x,
+				   int32_t i_pixel_y, int32_t i_width,
+				   int32_t i_height);
+
 glm::vec3 trace_ray(const Scene &S_scene, const Camera &S_camera,
 		    RTCDevice p_device, int32_t i_pixel_x, int32_t i_pixel_y,
 		    int32_t i_width, int32_t i_height);
