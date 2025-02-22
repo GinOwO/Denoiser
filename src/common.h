@@ -39,3 +39,9 @@ struct Camera {
 	float f_viewport_height;
 	float f_viewport_width;
 };
+
+struct ShadingResult {
+	glm::vec3 color;
+	glm::vec3 albedo;
+	glm::vec3 normal;
+};

@@ -4,7 +4,11 @@
 #include <immintrin.h>
 #include <iostream>
 #include <execution>
-#include <OpenImageDenoise/oidn.hpp>
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+#include <stb_image.h>
 
 static void glfw_error_callback(int32_t i_error, const char *psz_description)
 {
@@ -77,11 +81,20 @@ Renderer::Engine::Engine(const int32_t i_width, const int32_t i_height,
 			 const float f_ambient_intensity)
 	: i_width(i_width)
 	, i_height(i_height)
+	, m_oidn_device(oidn::newDevice())
+	, v_color_buffer(i_width * i_height * 3, 0.0f)
+	, v_albedo_buffer(i_width * i_height * 3, 0.0f)
+	, v_normal_buffer(i_width * i_height * 3, 0.0f)
+	, acc_buffer(i_width * i_height * 3, 0.0f)
+	, m_denoised_frame(i_width * i_height * 3, 0.0f)
 {
 	init_glfw();
 	init_embree_device();
 	init_camera();
 	S_scene.f_ambient_intensity = f_ambient_intensity;
+
+	m_oidn_device.commit();
+	m_denoiser_filter = m_oidn_device.newFilter("RT");
 }
 
 Renderer::Engine::~Engine()
@@ -89,6 +102,10 @@ Renderer::Engine::~Engine()
 	rtcReleaseScene(S_scene.p_RTCscene);
 	rtcReleaseDevice(p_RTCdevice);
 
+	m_denoiser_filter.release();
+	m_oidn_device.release();
+
+	glDeleteTextures(1, &m_texture_id);
 	glfwDestroyWindow(p_window);
 	glfwTerminate();
 }
@@ -150,10 +167,9 @@ void Renderer::Engine::load_obj_scene(const std::string &s_obj_file,
 	rtcCommitScene(S_scene.p_RTCscene);
 }
 
-void Renderer::Engine::render_loop()
+void Renderer::Engine::render_loop(const int sample_limit)
 {
-	static int frame_count = 0;
-	static std::vector<float> acc_buffer(i_width * i_height * 3, 0.0f);
+	int sample_count = 0;
 
 	GLuint texture_id;
 	std::vector<float> v_framebuffer(i_width * i_height * 3, 0.0f);
@@ -170,20 +186,22 @@ void Renderer::Engine::render_loop()
 	std::fill(std::execution::par_unseq, v_framebuffer.begin(),
 		  v_framebuffer.end(), 0.0f);
 
-	static double last_time = glfwGetTime();
-	while (!glfwWindowShouldClose(p_window)) {
+	double last_time = glfwGetTime();
+	while (true) {
 		glfwPollEvents();
+		if (glfwWindowShouldClose(p_window)) {
+			return;
+		}
 
-		// std::memset(v_framebuffer.data(), 0,
-		// 	    v_framebuffer.size() * sizeof(float));
-
+		if (sample_count >= sample_limit)
+			break;
 		render_frame(v_framebuffer);
 
-		frame_count++;
+		sample_count++;
 		for (int i = 0; i < i_width * i_height * 3; i++) {
-			acc_buffer[i] = (acc_buffer[i] * (frame_count - 1) +
+			acc_buffer[i] = (acc_buffer[i] * (sample_count - 1) +
 					 v_framebuffer[i]) /
-					frame_count;
+					sample_count;
 		}
 
 		glBindTexture(GL_TEXTURE_2D, m_texture_id);
@@ -210,11 +228,47 @@ void Renderer::Engine::render_loop()
 		glEnd();
 		glDisable(GL_TEXTURE_2D);
 		glfwSwapBuffers(p_window);
+		std::cout << "Sample count: " << sample_count << "\n";
+	}
+	double current_time = glfwGetTime();
+	std::cout << "Frame time: " << current_time - last_time
+		  << "s\nSample count: " << sample_count << "\nSample Time: "
+		  << (current_time - last_time) / sample_count << "s\n";
 
-		double current_time = glfwGetTime();
-		std::cout << "Sample time: " << current_time - last_time
-			  << "s\n";
-		last_time = current_time;
+	Renderer::Engine::write_buffer_to_image(acc_buffer, i_width, i_height,
+						"./acc_buffer.png");
+	oidn_denoise();
+
+	while (true) {
+		glfwPollEvents();
+		if (glfwWindowShouldClose(p_window)) {
+			return;
+		}
+
+		glBindTexture(GL_TEXTURE_2D, m_texture_id);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, i_width, i_height,
+				GL_RGB, GL_FLOAT, m_denoised_frame.data());
+
+		glClear(GL_COLOR_BUFFER_BIT);
+		glEnable(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, m_texture_id);
+		glBegin(GL_QUADS);
+		{
+			glTexCoord2f(0.0f, 0.0f);
+			glVertex2f(-1.0f, -1.0f);
+
+			glTexCoord2f(1.0f, 0.0f);
+			glVertex2f(1.0f, -1.0f);
+
+			glTexCoord2f(1.0f, 1.0f);
+			glVertex2f(1.0f, 1.0f);
+
+			glTexCoord2f(0.0f, 1.0f);
+			glVertex2f(-1.0f, 1.0f);
+		}
+		glEnd();
+		glDisable(GL_TEXTURE_2D);
+		glfwSwapBuffers(p_window);
 	}
 }
 
@@ -227,6 +281,32 @@ static inline float ACES_tonemapper(const float x)
 	static constexpr float e = 0.14f;
 	return glm::clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0f,
 			  1.0f);
+}
+
+void Renderer::Engine::oidn_denoise()
+{
+	std::fill(std::execution::par_unseq, m_denoised_frame.begin(),
+		  m_denoised_frame.end(), 0.0f);
+
+	double last_time = glfwGetTime();
+	m_denoiser_filter.setImage("color", acc_buffer.data(),
+				   oidn::Format::Float3, i_width, i_height);
+	m_denoiser_filter.setImage("output", m_denoised_frame.data(),
+				   oidn::Format::Float3, i_width, i_height);
+	m_denoiser_filter.commit();
+	m_denoiser_filter.execute();
+	double current_time = glfwGetTime();
+	std::cout << "Denoising time: " << current_time - last_time << "s\n";
+
+	Renderer::Engine::write_buffer_to_image(m_denoised_frame, i_width,
+						i_height,
+						"./oidn_denoised_frame.png");
+}
+
+void Renderer::Engine::custom_denoise()
+{
+	std::fill(std::execution::par_unseq, m_denoised_frame.begin(),
+		  m_denoised_frame.end(), 0.0f);
 }
 
 void Renderer::Engine::render_frame(std::vector<float> &v_framebuffer)
@@ -277,4 +357,28 @@ void Renderer::Engine::render_frame(std::vector<float> &v_framebuffer)
 				ACES_tonemapper(vec_color.b);
 		}
 	}
+}
+
+void Renderer::Engine::write_buffer_to_image(
+	const std::vector<float> &vec_buffer, const int32_t i_width,
+	const int32_t i_height, const std::string &s_output_file)
+{
+	stbi_set_flip_vertically_on_load(true);
+	std::vector<uint8_t> v_image(i_width * i_height * 3, 0);
+	for (int32_t i = 0; i < i_height; i++) {
+		for (int32_t j = 0; j < i_width; j++) {
+			int32_t i_index = (i * i_width + j) * 3;
+			int32_t i_flipped_index =
+				((i_height - i - 1) * i_width + j) * 3;
+			v_image[i_flipped_index + 0] = static_cast<uint8_t>(
+				vec_buffer[i_index + 0] * 255.0f);
+			v_image[i_flipped_index + 1] = static_cast<uint8_t>(
+				vec_buffer[i_index + 1] * 255.0f);
+			v_image[i_flipped_index + 2] = static_cast<uint8_t>(
+				vec_buffer[i_index + 2] * 255.0f);
+		}
+	}
+
+	stbi_write_png(s_output_file.c_str(), i_width, i_height, 3,
+		       v_image.data(), i_width * 3);
 }

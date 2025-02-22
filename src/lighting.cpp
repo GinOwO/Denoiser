@@ -5,6 +5,15 @@
 #include <cfloat>
 #include <random>
 
+static constexpr int32_t LIGHT_BOUNCE_DEPTH = 3;
+static constexpr int32_t SHADOW_SAMPLES = 32;
+static constexpr glm::vec3 LIGHT_POS(-278.0f, 548.0f, -279.6f);
+static constexpr glm::vec3 LIGHT_COLOR(0xff / 255.0f, 0xbb / 255.0f,
+				       0x73 / 255.0f);
+static constexpr float LIGHT_INTENSITY = 5.0f;
+static constexpr float LIGHT_WIDTH = 200.0f;
+static constexpr float LIGHT_HEIGHT = 225.0f;
+
 static glm::vec3 cosine_weighted_sample(const glm::vec3 &normal)
 {
 	static thread_local std::mt19937 rng{ std::random_device{}() };
@@ -121,36 +130,57 @@ static std::vector<glm::vec2> generate_stratified_offsets(int32_t i_num_samples,
 							  float f_light_height)
 {
 	static thread_local std::mt19937 rng{ std::random_device{}() };
+
+	int32_t grid_size = static_cast<int32_t>(sqrt(i_num_samples));
+	float cell_width = f_light_width / grid_size;
+	float cell_height = f_light_height / grid_size;
+
 	std::vector<glm::vec2> offsets(i_num_samples);
-	std::uniform_real_distribution<float> dist_x(-f_light_width * 0.5f,
-						     f_light_width * 0.5f);
-	std::uniform_real_distribution<float> dist_z(-f_light_height * 0.5f,
-						     f_light_height * 0.5f);
-	for (int32_t i = 0; i < i_num_samples; i++) {
-		offsets[i] = glm::vec2(dist_x(rng), dist_z(rng));
+	std::uniform_real_distribution<float> jitter(0.0f, 1.0f);
+
+	int32_t index = 0;
+	for (int32_t i = 0; i < grid_size && index < i_num_samples; i++) {
+		for (int32_t j = 0; j < grid_size && index < i_num_samples;
+		     j++) {
+			float base_x = (i + jitter(rng)) * cell_width -
+				       f_light_width * 0.5f;
+			float base_z = (j + jitter(rng)) * cell_height -
+				       f_light_height * 0.5f;
+
+			offsets[index++] = glm::vec2(base_x, base_z);
+		}
 	}
+
+	for (int32_t i = offsets.size() - 1; i > 0; i--) {
+		int32_t j = std::uniform_int_distribution<int32_t>(0, i)(rng);
+		std::swap(offsets[i], offsets[j]);
+	}
+
 	return offsets;
 }
 
-static float compute_shadow_factor_adaptive(
-	const RTCScene &p_scene, const glm::vec3 &vec_point,
-	const glm::vec3 &vec_light_pos, float f_light_width,
-	float f_light_height, int32_t i_min_samples = 4,
-	int32_t i_max_samples = 64, float f_variance_threshold = 0.005f)
+static float smoothstep(float edge0, float edge1, float x)
+{
+	float t = glm::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+	return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+static float compute_shadow_factor(const RTCScene &p_scene,
+				   const glm::vec3 &vec_point,
+				   const glm::vec3 &vec_light_pos,
+				   float f_light_width, float f_light_height,
+				   int32_t i_num_samples = 32)
 {
 	static thread_local std::vector<glm::vec2> precomputed_offsets;
-	if (precomputed_offsets.size() != static_cast<size_t>(i_max_samples)) {
+	if (precomputed_offsets.size() != static_cast<size_t>(i_num_samples)) {
 		precomputed_offsets = generate_stratified_offsets(
-			i_max_samples, f_light_width, f_light_height);
+			i_num_samples, f_light_width, f_light_height);
 	}
 
 	static thread_local RTCIntersectContext shadow_context;
 
-	float f_sum = 0.0f;
-	float f_sum_sq = 0.0f;
-	int32_t i_samples_taken = 0;
-
-	for (int32_t i = 0; i < i_max_samples; i++) {
+	float f_shadow_sum = 0.0f;
+	for (int32_t i = 0; i < i_num_samples; i++) {
 		const glm::vec2 &offset = precomputed_offsets[i];
 		glm::vec3 sample_light_pos =
 			vec_light_pos + glm::vec3(offset.x, 0.0f, offset.y);
@@ -158,37 +188,31 @@ static float compute_shadow_factor_adaptive(
 		float f_sample_dist = glm::length(sample_dir);
 		sample_dir = glm::normalize(sample_dir);
 
-		RTCRay t_ray;
-		std::memset(&t_ray, 0, sizeof(t_ray));
-		t_ray.org_x = vec_point.x;
-		t_ray.org_y = vec_point.y;
-		t_ray.org_z = vec_point.z;
-		t_ray.dir_x = sample_dir.x;
-		t_ray.dir_y = sample_dir.y;
-		t_ray.dir_z = sample_dir.z;
-		t_ray.tnear = 0.001f;
-		t_ray.tfar = f_sample_dist - 0.001f;
-		t_ray.mask = -1;
-		t_ray.flags = 0;
-
+		RTCRayHit t_shadow_hit;
+		std::memset(&t_shadow_hit, 0, sizeof(t_shadow_hit));
+		t_shadow_hit.ray.org_x = vec_point.x;
+		t_shadow_hit.ray.org_y = vec_point.y;
+		t_shadow_hit.ray.org_z = vec_point.z;
+		t_shadow_hit.ray.dir_x = sample_dir.x;
+		t_shadow_hit.ray.dir_y = sample_dir.y;
+		t_shadow_hit.ray.dir_z = sample_dir.z;
+		t_shadow_hit.ray.tnear = 0.001f;
+		t_shadow_hit.ray.tfar = f_sample_dist - 0.001f;
+		t_shadow_hit.ray.mask = -1;
+		t_shadow_hit.ray.flags = 0;
 		rtcInitIntersectContext(&shadow_context);
-		rtcOccluded1(p_scene, &shadow_context, &t_ray);
+		rtcIntersect1(p_scene, &shadow_context, &t_shadow_hit);
 
-		float f_sample_val = t_ray.tfar >= 0.0f;
-
-		i_samples_taken++;
-		f_sum += f_sample_val;
-		f_sum_sq += f_sample_val * f_sample_val;
-
-		if (i_samples_taken >= i_min_samples) {
-			float f_mean = f_sum / i_samples_taken;
-			float f_variance = (f_sum_sq / i_samples_taken) -
-					   (f_mean * f_mean);
-			if (f_variance < f_variance_threshold)
-				return f_mean;
+		float sample_shadow = 1.0f;
+		if (t_shadow_hit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
+			float hit_distance = t_shadow_hit.ray.tfar;
+			sample_shadow =
+				1.0f - smoothstep(0.0f, 0.15f * f_sample_dist,
+						  f_sample_dist - hit_distance);
 		}
+		f_shadow_sum += sample_shadow;
 	}
-	return f_sum / static_cast<float>(i_samples_taken);
+	return f_shadow_sum / static_cast<float>(i_num_samples);
 }
 
 bool lighting::is_in_shadow(const RTCScene &p_scene, const glm::vec3 &vec_point,
@@ -226,16 +250,9 @@ glm::vec3 lighting::compute_lambert_color(const glm::vec3 &vec_normal,
 					  RTCScene p_scene,
 					  float f_ambient_strength)
 {
-	static constexpr glm::vec3 vec_light_pos(-278.0f, 548.0f, -279.6f);
-	static constexpr glm::vec3 vec_light_color(
-		252.0f / 255.0f, 249.0f / 255.0f, 217.0f / 255.0f);
-	static constexpr float f_light_intensity = 5.0f;
-	static constexpr float f_light_width = 100.0f;
-	static constexpr float f_light_height = 100.0f;
-
 	glm::vec3 vec_ambient = vec_material_color * f_ambient_strength;
 
-	glm::vec3 vec_light_dir = vec_light_pos - vec_point;
+	glm::vec3 vec_light_dir = LIGHT_POS - vec_point;
 	float f_dist_to_light = glm::length(vec_light_dir);
 	vec_light_dir = glm::normalize(vec_light_dir);
 
@@ -247,19 +264,19 @@ glm::vec3 lighting::compute_lambert_color(const glm::vec3 &vec_normal,
 	const bool b_occluded = is_in_shadow(p_scene,
 					     vec_point + 0.001f * vec_normal,
 					     vec_light_dir, f_dist_to_light);
-	if (b_occluded) {
-		return vec_ambient;
-	}
+	// if (b_occluded) {
+	// 	return vec_ambient;
+	// }
 
-	const float f_shadow_factor = compute_shadow_factor_adaptive(
-		p_scene, vec_point + 0.001f * vec_normal, vec_light_pos,
-		f_light_width, f_light_height, 4, 64, 0.005f);
+	const float f_shadow_factor = compute_shadow_factor(
+		p_scene, vec_point + 0.001f * vec_normal, LIGHT_POS,
+		LIGHT_WIDTH, LIGHT_HEIGHT, SHADOW_SAMPLES);
 
-	const float f_lambert_term = f_n_dot_l * f_light_intensity;
-	glm::vec3 vec_lit_color =
-		vec_material_color * vec_light_color * f_lambert_term;
+	const float f_lambert_term = f_n_dot_l * LIGHT_INTENSITY;
+	glm::vec3 vec_lit_color = vec_material_color * LIGHT_COLOR *
+				  f_lambert_term * f_shadow_factor;
 
-	return vec_ambient + (f_shadow_factor * vec_lit_color);
+	return vec_ambient + vec_lit_color;
 }
 
 glm::vec3 lighting::trace_ray(const Scene &S_scene, const Camera &S_camera,
@@ -277,10 +294,9 @@ glm::vec3 lighting::trace_ray(const Scene &S_scene, const Camera &S_camera,
 		S_camera.vec_up * (f_v * S_camera.f_viewport_height);
 	const glm::vec3 vec_ray_direction =
 		glm::normalize(vec_pixel_position - S_camera.vec_camera_origin);
-	int max_depth = 3;
 	return trace_ray_recursive(S_scene.p_RTCscene, p_device,
 				   S_camera.vec_camera_origin,
-				   vec_ray_direction, max_depth,
+				   vec_ray_direction, LIGHT_BOUNCE_DEPTH,
 				   S_scene.v_materials,
 				   S_scene.f_ambient_intensity);
 }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(DenoiseProject LANGUAGES CXX)
+project(RayTracer LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 
 if(UNIX)
@@ -53,7 +53,7 @@ SET(LINK_FLAGS "${OpenMP_CXX_FLAGS} ${WIN_FLAG} -ltbb -pg")
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMPILE_FLAGS}")
 SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${LINK_FLAGS}")
 
-set(TARGET_NAME denoise)
+set(TARGET_NAME raytracer)
 set(SOURCES 
 	${PROJECT_SOURCE_DIR}/src/lighting.cpp
 	${PROJECT_SOURCE_DIR}/src/renderer.cpp
@@ -68,6 +68,7 @@ target_link_libraries(${TARGET_NAME} PRIVATE
 	glm::glm 
 	tinyobjloader
 	OpenMP::OpenMP_CXX
+	OpenImageDenoise
 )
 
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
