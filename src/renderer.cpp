@@ -4,6 +4,7 @@
 #include <immintrin.h>
 #include <iostream>
 #include <execution>
+#include <OpenImageDenoise/oidn.hpp>
 
 static void glfw_error_callback(int32_t i_error, const char *psz_description)
 {
@@ -166,26 +167,28 @@ void Renderer::Engine::render_loop()
 		     GL_FLOAT, nullptr);
 
 	m_texture_id = texture_id;
+	std::fill(std::execution::par_unseq, v_framebuffer.begin(),
+		  v_framebuffer.end(), 0.0f);
 
 	static double last_time = glfwGetTime();
 	while (!glfwWindowShouldClose(p_window)) {
 		glfwPollEvents();
 
-		std::fill(std::execution::par_unseq, v_framebuffer.begin(),
-			  v_framebuffer.end(), 0.0f);
+		// std::memset(v_framebuffer.data(), 0,
+		// 	    v_framebuffer.size() * sizeof(float));
 
 		render_frame(v_framebuffer);
 
-		// frame_count++;
-		// for (int i = 0; i < i_width * i_height * 3; i++) {
-		// 	acc_buffer[i] = (acc_buffer[i] * (frame_count - 1) +
-		// 			 v_framebuffer[i]) /
-		// 			frame_count;
-		// }
+		frame_count++;
+		for (int i = 0; i < i_width * i_height * 3; i++) {
+			acc_buffer[i] = (acc_buffer[i] * (frame_count - 1) +
+					 v_framebuffer[i]) /
+					frame_count;
+		}
 
 		glBindTexture(GL_TEXTURE_2D, m_texture_id);
 		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, i_width, i_height,
-				GL_RGB, GL_FLOAT, v_framebuffer.data());
+				GL_RGB, GL_FLOAT, acc_buffer.data());
 
 		glClear(GL_COLOR_BUFFER_BIT);
 		glEnable(GL_TEXTURE_2D);
@@ -209,10 +212,21 @@ void Renderer::Engine::render_loop()
 		glfwSwapBuffers(p_window);
 
 		double current_time = glfwGetTime();
-		std::cout << "Frame time: " << current_time - last_time
+		std::cout << "Sample time: " << current_time - last_time
 			  << "s\n";
 		last_time = current_time;
 	}
+}
+
+static inline float ACES_tonemapper(const float x)
+{
+	static constexpr float a = 2.51f;
+	static constexpr float b = 0.03f;
+	static constexpr float c = 2.43f;
+	static constexpr float d = 0.59f;
+	static constexpr float e = 0.14f;
+	return glm::clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0f,
+			  1.0f);
 }
 
 void Renderer::Engine::render_frame(std::vector<float> &v_framebuffer)
@@ -249,9 +263,18 @@ void Renderer::Engine::render_frame(std::vector<float> &v_framebuffer)
 				i_pixel_y, i_width, i_height) };
 
 			int i_index = (i_pixel_y * i_width + i_pixel_x) * 3;
-			v_framebuffer[i_index + 0] = vec_color.r;
-			v_framebuffer[i_index + 1] = vec_color.g;
-			v_framebuffer[i_index + 2] = vec_color.b;
+			// v_framebuffer[i_index + 0] =
+			// 	glm::clamp(vec_color.r, 0.0f, 1.0f);
+			// v_framebuffer[i_index + 1] =
+			// 	glm::clamp(vec_color.g, 0.0f, 1.0f);
+			// v_framebuffer[i_index + 2] =
+			// 	glm::clamp(vec_color.b, 0.0f, 1.0f);
+			v_framebuffer[i_index + 0] =
+				ACES_tonemapper(vec_color.r);
+			v_framebuffer[i_index + 1] =
+				ACES_tonemapper(vec_color.g);
+			v_framebuffer[i_index + 2] =
+				ACES_tonemapper(vec_color.b);
 		}
 	}
 }

@@ -29,6 +29,7 @@ find_package(glfw3 3.3 REQUIRED)
 find_package(glm REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(OpenMP REQUIRED)
+find_package(OpenImageDenoise REQUIRED)
 
 find_path(TINYOBJLOADER_INCLUDE_DIR tiny_obj_loader.h)
 if(TINYOBJLOADER_INCLUDE_DIR)

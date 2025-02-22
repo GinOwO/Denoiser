@@ -21,4 +21,5 @@ glm::vec3 compute_lambert_color(const glm::vec3 &vec_normal,
 glm::vec3 trace_ray(const Scene &S_scene, const Camera &S_camera,
 		    RTCDevice p_device, int32_t i_pixel_x, int32_t i_pixel_y,
 		    int32_t i_width, int32_t i_height);
+
 } // namespace lighting
